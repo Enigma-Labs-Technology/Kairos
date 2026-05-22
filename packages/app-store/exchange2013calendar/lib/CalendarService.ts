@@ -1,3 +1,18 @@
+import process from "node:process";
+import { symmetricDecrypt } from "@calcom/lib/crypto";
+// Probably don't need
+// import { CALENDAR_INTEGRATIONS_TYPES } from "@calcom/lib/integrations/calendar/constants/generals";
+import logger from "@calcom/lib/logger";
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
+import type {
+  Calendar,
+  CalendarEvent,
+  EventBusyDate,
+  GetAvailabilityParams,
+  IntegrationCalendar,
+  NewCalendarEventType,
+} from "@calcom/types/Calendar";
+import type { CredentialPayload } from "@calcom/types/Credential";
 import {
   Appointment,
   Attendee,
@@ -19,20 +34,6 @@ import {
   WebCredentials,
   WellKnownFolderName,
 } from "ews-javascript-api";
-
-import { symmetricDecrypt } from "@calcom/lib/crypto";
-// Probably don't need
-// import { CALENDAR_INTEGRATIONS_TYPES } from "@calcom/lib/integrations/calendar/constants/generals";
-import logger from "@calcom/lib/logger";
-import type {
-  Calendar,
-  CalendarEvent,
-  EventBusyDate,
-  GetAvailabilityParams,
-  IntegrationCalendar,
-  NewCalendarEventType,
-} from "@calcom/types/Calendar";
-import type { CredentialPayload } from "@calcom/types/Credential";
 
 class ExchangeCalendarService implements Calendar {
   private url = "";
@@ -64,7 +65,7 @@ class ExchangeCalendarService implements Calendar {
 
   async createEvent(event: CalendarEvent): Promise<NewCalendarEventType> {
     try {
-      const appointment = new Appointment(this.getExchangeService()); // service instance of ExchangeService
+      const appointment = new Appointment(await this.getExchangeService()); // service instance of ExchangeService
       appointment.Subject = event.title;
       appointment.Start = DateTime.Parse(event.startTime); // moment string
       appointment.End = DateTime.Parse(event.endTime); // moment string
@@ -101,7 +102,7 @@ class ExchangeCalendarService implements Calendar {
   async updateEvent(uid: string, event: CalendarEvent): Promise<any> {
     try {
       const appointment = await Appointment.Bind(
-        this.getExchangeService(),
+        await this.getExchangeService(),
         new ItemId(uid),
         new PropertySet()
       );
@@ -131,7 +132,7 @@ class ExchangeCalendarService implements Calendar {
   async deleteEvent(uid: string) {
     try {
       const appointment = await Appointment.Bind(
-        this.getExchangeService(),
+        await this.getExchangeService(),
         new ItemId(uid),
         new PropertySet()
       );
@@ -160,12 +161,12 @@ class ExchangeCalendarService implements Calendar {
       const finaleRet = [];
       for (let i = 0; i < calendarsToGetAppointmentsFrom.length; i++) {
         const calendarFolderId = new FolderId(calendarsToGetAppointmentsFrom[i].externalId);
-        const localReturn = await this.getExchangeService()
+        const localReturn = await (await this.getExchangeService())
           .FindAppointments(
             calendarFolderId,
             new CalendarView(DateTime.Parse(dateFrom), DateTime.Parse(dateTo))
           )
-          .then(function (params) {
+          .then((params) => {
             const ret: EventBusyDate[] = [];
 
             for (let k = 0; k < params.Items.length; k++) {
@@ -192,7 +193,8 @@ class ExchangeCalendarService implements Calendar {
   async listCalendars() {
     try {
       const allFolders: IntegrationCalendar[] = [];
-      return this.getExchangeService()
+      const service = await this.getExchangeService();
+      return service
         .FindFolders(WellKnownFolderName.MsgFolderRoot, new FolderView(1000))
         .then(async (res) => {
           for (const k in res.Folders) {
@@ -205,20 +207,18 @@ class ExchangeCalendarService implements Calendar {
                 primary: true, //The first one is prime
                 integration: this.integrationName,
               });
-              return await this.getExchangeService()
-                .FindFolders(f.Id, new FolderView(1000))
-                .then((res) => {
-                  //Find all calendars inside calendar folder
-                  res.Folders.forEach((fs) => {
-                    allFolders.push({
-                      externalId: fs.Id.UniqueId,
-                      name: fs.DisplayName ?? "",
-                      primary: false,
-                      integration: this.integrationName,
-                    });
+              return await service.FindFolders(f.Id, new FolderView(1000)).then((res) => {
+                //Find all calendars inside calendar folder
+                res.Folders.forEach((fs) => {
+                  allFolders.push({
+                    externalId: fs.Id.UniqueId,
+                    name: fs.DisplayName ?? "",
+                    primary: false,
+                    integration: this.integrationName,
                   });
-                  return allFolders;
                 });
+                return allFolders;
+              });
             }
           }
           return allFolders;
@@ -229,7 +229,12 @@ class ExchangeCalendarService implements Calendar {
     }
   }
 
-  private getExchangeService(): ExchangeService {
+  private async getExchangeService(): Promise<ExchangeService> {
+    const validation = await validatePublicUrlForSSRF(this.url);
+    if (!validation.isValid) {
+      throw new Error(`Exchange URL is not allowed: ${validation.error}`);
+    }
+
     const exch1 = new ExchangeService(this.exchangeVersion);
     exch1.Credentials = new WebCredentials(this.credentials.username, this.credentials.password);
     exch1.Url = new Uri(this.url);

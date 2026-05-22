@@ -1,9 +1,8 @@
 import { DEFAULT_WEBHOOK_VERSION } from "@calcom/features/webhooks/lib/interface/IWebhookRepository";
 import type { EventPayloadType } from "@calcom/features/webhooks/lib/sendPayload";
 import sendPayload from "@calcom/features/webhooks/lib/sendPayload";
-import { validateUrlForSSRFSync } from "@calcom/lib/ssrfProtection";
 import { getTranslation } from "@calcom/i18n/server";
-
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
 import type { TTestTriggerInputSchema } from "./testTrigger.schema";
 
 type TestTriggerOptions = {
@@ -15,7 +14,7 @@ export const testTriggerHandler = async ({ ctx: _ctx, input }: TestTriggerOption
   const { url, type, payloadTemplate = null, secret = null } = input;
 
   // SSRF validation for webhook URL
-  const validation = validateUrlForSSRFSync(url);
+  const validation = await validatePublicUrlForSSRF(url);
   if (!validation.isValid) {
     return {
       ok: false,

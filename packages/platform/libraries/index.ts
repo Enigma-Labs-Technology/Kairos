@@ -90,12 +90,12 @@ export { paymentDataSelect };
 export { confirmHandler as confirmBookingHandler } from "@calcom/trpc/server/routers/viewer/bookings/confirm.handler";
 export { getBookingFieldsWithSystemFields };
 
-export { checkAdminOrOwner } from "@calcom/features/auth/lib/checkAdminOrOwner";
 export { sendLocationChangeEmailsAndSMS } from "@calcom/emails/email-manager";
+export { checkAdminOrOwner } from "@calcom/features/auth/lib/checkAdminOrOwner";
 export { verifyCodeUnAuthenticated } from "@calcom/features/auth/lib/verifyCodeUnAuthenticated";
 export { sendEmailVerificationByCode } from "@calcom/features/auth/lib/verifyEmail";
-export { getCalendarLinks } from "@calcom/features/bookings/lib/getCalendarLinks";
 export { BookingReferenceRepository } from "@calcom/features/bookingReference/repositories/BookingReferenceRepository";
+export { getCalendarLinks } from "@calcom/features/bookings/lib/getCalendarLinks";
 export { BookingAccessService } from "@calcom/features/bookings/services/BookingAccessService";
 export { CredentialRepository } from "@calcom/features/credentials/repositories/CredentialRepository";
 export type { OrgMembershipLookup } from "@calcom/features/di/modules/OrgMembershipLookup";
@@ -110,7 +110,7 @@ export { buildCalEventFromBooking } from "@calcom/lib/buildCalEventFromBooking";
 export { getVideoCallUrlFromCalEvent } from "@calcom/lib/CalEventParser";
 export { verifyCodeChallenge } from "@calcom/lib/pkce";
 export { encryptServiceAccountKey } from "@calcom/lib/server/serviceAccountKey";
-export { validateUrlForSSRFSync } from "@calcom/lib/ssrfProtection";
+export { validatePublicUrlForSSRF, validateUrlForSSRFSync } from "@calcom/lib/ssrfProtection";
 export type { TraceContext } from "@calcom/lib/tracing";
 export { distributedTracing } from "@calcom/lib/tracing/factory";
 export {

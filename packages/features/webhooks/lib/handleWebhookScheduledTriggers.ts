@@ -1,7 +1,7 @@
 import dayjs from "@calcom/dayjs";
 import logger from "@calcom/lib/logger";
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
 import type { PrismaClient } from "@calcom/prisma";
-
 import { DEFAULT_WEBHOOK_VERSION } from "./interface/IWebhookRepository";
 import { createWebhookSignature, jsonParse } from "./sendPayload";
 
@@ -63,6 +63,21 @@ export async function handleWebhookScheduledTriggers(prisma: PrismaClient) {
     if (webhook) {
       headers["X-Cal-Signature-256"] = createWebhookSignature({ secret: webhook.secret, body: job.payload });
     }
+
+    const validation = await validatePublicUrlForSSRF(job.subscriberUrl);
+    if (!validation.isValid) {
+      logger.warn("Scheduled webhook URL blocked by SSRF validation", {
+        reason: validation.error,
+        jobId: job.id,
+      });
+      await prisma.webhookScheduledTriggers.delete({
+        where: {
+          id: job.id,
+        },
+      });
+      continue;
+    }
+
     fetchPromises.push(
       fetch(job.subscriberUrl, {
         method: "POST",

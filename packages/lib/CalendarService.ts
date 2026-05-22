@@ -34,6 +34,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getLocation, getRichDescription } from "./CalEventParser";
 import { symmetricDecrypt } from "./crypto";
 import logger from "./logger";
+import { validatePublicUrlForSSRF } from "./ssrfProtection";
 
 const TIMEZONE_FORMAT = "YYYY-MM-DDTHH:mm:ss[Z]";
 const DEFAULT_CALENDAR_TYPE = "caldav";
@@ -422,6 +423,13 @@ export default abstract class BaseCalendarService implements Calendar {
     }
 
     return attendees;
+  }
+
+  private async assertPublicCalendarUrl(url: string, label: string): Promise<void> {
+    const validation = await validatePublicUrlForSSRF(url);
+    if (!validation.isValid) {
+      throw new Error(`${label} is not allowed: ${validation.error}`);
+    }
   }
 
   async createEvent(event: CalendarServiceEvent, credentialId: number): Promise<NewCalendarEventType> {
@@ -871,6 +879,8 @@ export default abstract class BaseCalendarService implements Calendar {
   }: FetchObjectsWithOptionalExpandOptionsType): Promise<DAVObject[]> {
     const filteredCalendars = selectedCalendars.filter((sc) => sc.externalId);
     const fetchPromises = filteredCalendars.map(async (sc) => {
+      await this.assertPublicCalendarUrl(sc.externalId, "Calendar URL");
+
       const response = await fetchCalendarObjects({
         urlFilter: (url) => this.isValidFormat(url),
         calendar: {
@@ -927,6 +937,8 @@ export default abstract class BaseCalendarService implements Calendar {
     objectUrls?: string[] | null
   ) {
     try {
+      await this.assertPublicCalendarUrl(calId, "Calendar URL");
+
       const objects = await fetchCalendarObjects({
         calendar: {
           url: calId,
@@ -1011,6 +1023,8 @@ export default abstract class BaseCalendarService implements Calendar {
   }
 
   private async getAccount(): Promise<DAVAccount> {
+    await this.assertPublicCalendarUrl(this.url, "CalDAV server URL");
+
     return createAccount({
       account: {
         serverUrl: this.url,

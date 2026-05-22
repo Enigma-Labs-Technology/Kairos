@@ -40,6 +40,10 @@ vi.mock("./CalEventParser", () => ({
   getRichDescription: vi.fn().mockReturnValue("Test Description"),
 }));
 
+vi.mock("./ssrfProtection", () => ({
+  validatePublicUrlForSSRF: vi.fn().mockResolvedValue({ isValid: true }),
+}));
+
 import type { CalendarServiceEvent } from "@calcom/types/Calendar";
 import BaseCalendarService from "./CalendarService";
 

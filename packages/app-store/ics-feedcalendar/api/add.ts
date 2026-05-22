@@ -1,9 +1,9 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
+import process from "node:process";
 import { symmetricEncrypt } from "@calcom/lib/crypto";
 import logger from "@calcom/lib/logger";
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import appConfig from "../config.json";
 import { BuildCalendarService } from "../lib";
@@ -11,6 +11,17 @@ import { BuildCalendarService } from "../lib";
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === "POST") {
     const { urls } = req.body;
+    if (!Array.isArray(urls) || urls.some((url) => typeof url !== "string")) {
+      return res.status(400).json({ message: "Invalid ICS feed URLs" });
+    }
+
+    for (const url of urls) {
+      const validation = await validatePublicUrlForSSRF(url);
+      if (!validation.isValid) {
+        return res.status(400).json({ message: `ICS feed URL is not allowed: ${validation.error}` });
+      }
+    }
+
     // Get user
     const user = await prisma.user.findFirstOrThrow({
       where: {

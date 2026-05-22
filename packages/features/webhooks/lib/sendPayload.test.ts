@@ -1,4 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockValidatePublicUrlForSSRF } = vi.hoisted(() => ({
+  mockValidatePublicUrlForSSRF: vi.fn(),
+}));
+
+vi.mock("@calcom/lib/ssrfProtection", () => ({
+  validatePublicUrlForSSRF: mockValidatePublicUrlForSSRF,
+}));
 
 import { WebhookVersion } from "./interface/IWebhookRepository";
 import sendPayload from "./sendPayload";
@@ -8,6 +16,7 @@ describe("sendPayload", () => {
 
   beforeEach(() => {
     vi.stubGlobal("fetch", mockFetch);
+    mockValidatePublicUrlForSSRF.mockResolvedValue({ isValid: true });
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -17,6 +26,39 @@ describe("sendPayload", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetAllMocks();
+  });
+
+  it("rejects webhook delivery when the subscriber URL fails strict SSRF validation", async () => {
+    mockValidatePublicUrlForSSRF.mockResolvedValueOnce({
+      isValid: false,
+      error: "Hostname resolves to private IP",
+    });
+
+    const webhook = {
+      subscriberUrl: "https://calendar.example.test/webhook",
+      appId: null,
+      payloadTemplate: null,
+      version: WebhookVersion.V_2021_10_20,
+    };
+
+    await expect(
+      sendPayload("test-secret", "BOOKING_CREATED", new Date().toISOString(), webhook, {
+        title: "Test Booking",
+        startTime: "2024-01-01T10:00:00Z",
+        endTime: "2024-01-01T11:00:00Z",
+        organizer: {
+          email: "organizer@example.com",
+          name: "Organizer",
+          timeZone: "UTC",
+          language: { locale: "en" },
+        },
+        attendees: [],
+        type: "test-event",
+        description: "",
+      } as unknown as Parameters<typeof sendPayload>[4])
+    ).rejects.toThrow("Webhook URL is not allowed: Hostname resolves to private IP");
+
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   describe("X-Cal-Webhook-Version header", () => {
@@ -108,6 +150,4 @@ describe("sendPayload", () => {
       expect(options.headers["X-Cal-Webhook-Version"]).toBe("2021-10-20");
     });
   });
-
-
 });

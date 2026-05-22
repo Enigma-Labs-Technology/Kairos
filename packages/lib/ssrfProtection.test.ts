@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const { mockLookup } = vi.hoisted(() => ({
+  mockLookup: vi.fn(),
+}));
+
+vi.mock("node:dns/promises", () => ({
+  default: {
+    lookup: mockLookup,
+  },
+}));
+
 // Default mock for Cal.diy SaaS (IS_SELF_HOSTED = false)
 vi.mock("@calcom/lib/constants", () => ({
   IS_SELF_HOSTED: false,
@@ -7,9 +17,11 @@ vi.mock("@calcom/lib/constants", () => ({
 }));
 
 import {
+  fetchWithSSRFProtection,
   isBlockedHostname,
   isPrivateIP,
   isTrustedInternalUrl,
+  validatePublicUrlForSSRF,
   validateUrlForSSRFSync,
 } from "./ssrfProtection";
 
@@ -130,6 +142,66 @@ describe("validateUrlForSSRFSync", () => {
 
   it("allows public IPv6 addresses", () => {
     expect(validateUrlForSSRFSync("https://[2001:4860:4860::8888]/").isValid).toBe(true);
+  });
+});
+
+describe("validatePublicUrlForSSRF", () => {
+  afterEach(() => {
+    mockLookup.mockReset();
+  });
+
+  it("blocks private URLs even when the deployment is self-hosted", async () => {
+    const result = await validatePublicUrlForSSRF("http://127.0.0.1/webhook");
+
+    expect(result).toEqual({ isValid: false, error: "Blocked hostname" });
+  });
+
+  it("blocks hostnames that resolve to private IPs", async () => {
+    mockLookup.mockResolvedValue([{ address: "10.0.0.12", family: 4 }]);
+
+    const result = await validatePublicUrlForSSRF("https://calendar.example.test/feed.ics");
+
+    expect(result).toEqual({ isValid: false, error: "Hostname resolves to private IP" });
+    expect(mockLookup).toHaveBeenCalledWith("calendar.example.test", { all: true });
+  });
+
+  it("allows public IP literals without DNS lookup", async () => {
+    const result = await validatePublicUrlForSSRF("https://93.184.216.34/webhook");
+
+    expect(result).toEqual({ isValid: true });
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchWithSSRFProtection", () => {
+  const mockFetch = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    mockFetch.mockReset();
+    mockLookup.mockReset();
+  });
+
+  it("revalidates redirect targets before following them", async () => {
+    mockLookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    mockFetch.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: {
+          location: "http://127.0.0.1/admin",
+        },
+      })
+    );
+
+    await expect(
+      fetchWithSSRFProtection("https://calendar.example.test/feed.ics", {}, { maxRedirects: 1 })
+    ).rejects.toThrow("URL is not allowed: Blocked hostname");
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
 

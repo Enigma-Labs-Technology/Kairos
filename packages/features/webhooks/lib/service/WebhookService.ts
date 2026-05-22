@@ -1,10 +1,10 @@
 import { createHmac } from "node:crypto";
-
+import process from "node:process";
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
 import { WebhookTriggerEvents } from "@calcom/prisma/enums";
-
-import type { WebhookSubscriber, WebhookDeliveryResult } from "../dto/types";
+import type { WebhookDeliveryResult, WebhookSubscriber } from "../dto/types";
 import type { WebhookPayload } from "../factory/types";
-import type { ITasker, ILogger } from "../interface/infrastructure";
+import type { ILogger, ITasker } from "../interface/infrastructure";
 import type { IWebhookRepository, IWebhookService } from "../interface/services";
 
 export class WebhookService implements IWebhookService {
@@ -79,6 +79,11 @@ export class WebhookService implements IWebhookService {
   ): Promise<WebhookDeliveryResult> {
     const { subscriberUrl, payloadTemplate } = subscriber;
     if (!subscriberUrl) throw new Error("Missing subscriber URL");
+
+    const validation = await validatePublicUrlForSSRF(subscriberUrl);
+    if (!validation.isValid) {
+      throw new Error(`Webhook URL is not allowed: ${validation.error}`);
+    }
 
     const contentType =
       !payloadTemplate || this.isJsonTemplate(payloadTemplate)

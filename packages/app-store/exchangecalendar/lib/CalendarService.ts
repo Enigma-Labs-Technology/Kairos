@@ -1,3 +1,17 @@
+import process from "node:process";
+import { symmetricDecrypt } from "@calcom/lib/crypto";
+import logger from "@calcom/lib/logger";
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
+import type {
+  Calendar,
+  CalendarEvent,
+  EventBusyDate,
+  GetAvailabilityParams,
+  IntegrationCalendar,
+  NewCalendarEventType,
+  Person,
+} from "@calcom/types/Calendar";
+import type { CredentialPayload } from "@calcom/types/Credential";
 import type { FindFoldersResults, FindItemsResults } from "ews-javascript-api";
 import {
   Appointment,
@@ -25,20 +39,6 @@ import {
   WebCredentials,
   WellKnownFolderName,
 } from "ews-javascript-api";
-
-import { symmetricDecrypt } from "@calcom/lib/crypto";
-import logger from "@calcom/lib/logger";
-import type {
-  Calendar,
-  CalendarEvent,
-  EventBusyDate,
-  GetAvailabilityParams,
-  IntegrationCalendar,
-  NewCalendarEventType,
-  Person,
-} from "@calcom/types/Calendar";
-import type { CredentialPayload } from "@calcom/types/Credential";
-
 import { ExchangeAuthentication } from "../enums";
 
 class ExchangeCalendarService implements Calendar {
@@ -195,6 +195,11 @@ class ExchangeCalendarService implements Calendar {
   }
 
   private async getExchangeService(): Promise<ExchangeService> {
+    const validation = await validatePublicUrlForSSRF(this.payload.url);
+    if (!validation.isValid) {
+      throw new Error(`Exchange URL is not allowed: ${validation.error}`);
+    }
+
     const service: ExchangeService = new ExchangeService(this.payload.exchangeVersion);
     service.Credentials = new WebCredentials(this.payload.username, this.payload.password);
     service.Url = new Uri(this.payload.url);
@@ -215,8 +220,6 @@ class ExchangeCalendarService implements Calendar {
  * from leaking into the emitted .d.ts file, which would cause TypeScript to load
  * all EWS SDK declaration files when type-checking dependent packages.
  */
-export default function BuildCalendarService(
-  credential: CredentialPayload
-): Calendar {
+export default function BuildCalendarService(credential: CredentialPayload): Calendar {
   return new ExchangeCalendarService(credential);
 }

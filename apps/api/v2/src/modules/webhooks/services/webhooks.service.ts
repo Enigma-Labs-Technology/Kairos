@@ -1,7 +1,7 @@
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { UpdateWebhookInputDto } from "@/modules/webhooks/inputs/webhook.input";
 import { validateWebhookUrlIfChanged } from "@/modules/webhooks/utils/validate-webhook-url";
 import { WebhooksRepository } from "@/modules/webhooks/webhooks.repository";
-import { Injectable, NotFoundException } from "@nestjs/common";
 
 @Injectable()
 export class WebhooksService {
@@ -9,7 +9,7 @@ export class WebhooksService {
 
   async updateWebhook(webhookId: string, body: UpdateWebhookInputDto) {
     const existingSubscriberUrl = await this.webhooksRepository.getWebhookSubscriberUrl(webhookId);
-    validateWebhookUrlIfChanged(body.subscriberUrl, existingSubscriberUrl);
+    await validateWebhookUrlIfChanged(body.subscriberUrl, existingSubscriberUrl);
     return this.webhooksRepository.updateWebhook(webhookId, body);
   }
 

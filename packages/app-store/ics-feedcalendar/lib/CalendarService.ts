@@ -4,6 +4,7 @@
 import process from "node:process";
 import dayjs from "@calcom/dayjs";
 import { symmetricDecrypt } from "@calcom/lib/crypto";
+import { fetchWithSSRFProtection } from "@calcom/lib/ssrfProtection";
 import type {
   Calendar,
   CalendarEvent,
@@ -39,6 +40,46 @@ const applyTravelDuration = (event: ICAL.Event, seconds: number) => {
 };
 
 const CALENDSO_ENCRYPTION_KEY = process.env.CALENDSO_ENCRYPTION_KEY || "";
+const MAX_ICS_RESPONSE_BYTES = 1_000_000;
+const ICS_FETCH_TIMEOUT_MS = 10_000;
+
+async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && Number(contentLength) > maxBytes) {
+    throw new Error("ICS feed response is too large");
+  }
+
+  if (!response.body) {
+    const text = await response.text();
+    if (new TextEncoder().encode(text).length > maxBytes) {
+      throw new Error("ICS feed response is too large");
+    }
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.length;
+    if (totalBytes > maxBytes) {
+      throw new Error("ICS feed response is too large");
+    }
+    chunks.push(value);
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return new TextDecoder().decode(body);
+}
 
 class ICSFeedCalendarService implements Calendar {
   private urls: string[] = [];
@@ -83,11 +124,25 @@ class ICSFeedCalendarService implements Calendar {
   }
 
   fetchCalendars = async (): Promise<{ url: string; vcalendar: ICAL.Component }[]> => {
-    const reqPromises = await Promise.allSettled(this.urls.map((x) => fetch(x).then((y) => [x, y])));
+    const reqPromises = await Promise.allSettled(
+      this.urls.map((x) =>
+        fetchWithSSRFProtection(
+          x,
+          {},
+          {
+            maxRedirects: 3,
+            timeoutMs: ICS_FETCH_TIMEOUT_MS,
+            context: { integration: this.integrationName },
+          }
+        ).then((y) => [x, y] as const)
+      )
+    );
     const reqs = reqPromises
       .filter((x) => x.status === "fulfilled")
-      .map((x) => (x as PromiseFulfilledResult<[string, Response]>).value);
-    const res = await Promise.all(reqs.map((x) => x[1].text().then((y) => [x[0], y])));
+      .map((x) => (x as PromiseFulfilledResult<readonly [string, Response]>).value);
+    const res = await Promise.all(
+      reqs.map((x) => readResponseTextWithLimit(x[1], MAX_ICS_RESPONSE_BYTES).then((y) => [x[0], y]))
+    );
     return res
       .map((x) => {
         try {

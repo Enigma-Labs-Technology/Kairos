@@ -1,15 +1,11 @@
-import { v4 } from "uuid";
-
 import { updateTriggerForExistingBookings } from "@calcom/features/webhooks/lib/scheduleTrigger";
-import { validateUrlForSSRFSync } from "@calcom/lib/ssrfProtection";
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
 import { prisma } from "@calcom/prisma";
-import type { Webhook } from "@calcom/prisma/client";
-import type { Prisma } from "@calcom/prisma/client";
+import type { Prisma, Webhook } from "@calcom/prisma/client";
 import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
-
 import { TRPCError } from "@trpc/server";
-
+import { v4 } from "uuid";
 import type { TCreateInputSchema } from "./create.schema";
 
 type CreateOptions = {
@@ -22,7 +18,7 @@ type CreateOptions = {
 export const createHandler = async ({ ctx, input }: CreateOptions) => {
   const { user } = ctx;
 
-  const validation = validateUrlForSSRFSync(input.subscriberUrl);
+  const validation = await validatePublicUrlForSSRF(input.subscriberUrl);
   if (!validation.isValid) {
     throw new TRPCError({
       code: "BAD_REQUEST",

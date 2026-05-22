@@ -9,7 +9,7 @@ export class TeamEventTypeWebhooksService {
   constructor(private readonly webhooksRepository: WebhooksRepository) {}
 
   async createTeamEventTypeWebhook(eventTypeId: number, body: PipedInputWebhookType) {
-    validateWebhookUrl(body.subscriberUrl);
+    await validateWebhookUrl(body.subscriberUrl);
 
     if (body.eventTriggers.includes(WebhookTriggerEvents.DELEGATION_CREDENTIAL_ERROR)) {
       throw new BadRequestException(

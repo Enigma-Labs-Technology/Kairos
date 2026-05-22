@@ -1,14 +1,12 @@
 import {
-  updateTriggerForExistingBookings,
-  deleteWebhookScheduledTriggers,
   cancelNoShowTasksForBooking,
+  deleteWebhookScheduledTriggers,
+  updateTriggerForExistingBookings,
 } from "@calcom/features/webhooks/lib/scheduleTrigger";
-import { validateUrlForSSRFSync } from "@calcom/lib/ssrfProtection";
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
 import { prisma } from "@calcom/prisma";
 import type { TrpcSessionUser } from "@calcom/trpc/server/types";
-
 import { TRPCError } from "@trpc/server";
-
 import type { TEditInputSchema } from "./edit.schema";
 
 type EditOptions = {
@@ -33,7 +31,7 @@ export const editHandler = async ({ input, ctx }: EditOptions) => {
 
   // SSRF validation: only validate if URL is being changed
   if (data.subscriberUrl && data.subscriberUrl !== webhook.subscriberUrl) {
-    const validation = validateUrlForSSRFSync(data.subscriberUrl);
+    const validation = await validatePublicUrlForSSRF(data.subscriberUrl);
     if (!validation.isValid) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -49,7 +47,7 @@ export const editHandler = async ({ input, ctx }: EditOptions) => {
     }
   }
 
-  const updatedWebhook= await prisma.webhook.update({
+  const updatedWebhook = await prisma.webhook.update({
     where: {
       id,
     },

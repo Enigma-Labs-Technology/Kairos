@@ -1,15 +1,20 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-
+import process from "node:process";
 import { symmetricEncrypt } from "@calcom/lib/crypto";
 import logger from "@calcom/lib/logger";
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import { BuildCalendarService } from "../lib";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === "POST") {
     const { username, password, url } = req.body;
+    const validation = await validatePublicUrlForSSRF(url);
+    if (!validation.isValid) {
+      return res.status(400).json({ message: `CalDAV URL is not allowed: ${validation.error}` });
+    }
+
     // Get user
     const user = await prisma.user.findFirstOrThrow({
       where: {
@@ -54,7 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const adminUrl = `${parsedUrl.protocol}//${parsedUrl.hostname}${
             parsedUrl.port ? `:${parsedUrl.port}` : ""
           }/admin/?/settings/standard/`;
-          message = `Couldn\'t connect to caldav account, please verify WebDAV authentication type is set to "Basic"`;
+          message = `Couldn't connect to caldav account, please verify WebDAV authentication type is set to "Basic"`;
           return res.status(500).json({ message, actionUrl: adminUrl });
         }
       }

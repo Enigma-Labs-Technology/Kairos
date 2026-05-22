@@ -1,13 +1,13 @@
-import { SoapFaultDetails } from "ews-javascript-api";
-import type { NextApiRequest, NextApiResponse } from "next";
-import { z } from "zod";
-
+import process from "node:process";
 import { symmetricEncrypt } from "@calcom/lib/crypto";
 import { emailSchema } from "@calcom/lib/emailSchema";
 import logger from "@calcom/lib/logger";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
 import prisma from "@calcom/prisma";
-
+import { SoapFaultDetails } from "ews-javascript-api";
+import type { NextApiRequest, NextApiResponse } from "next";
+import { z } from "zod";
 import checkSession from "../../_utils/auth";
 import { ExchangeAuthentication, ExchangeVersion } from "../enums";
 import { BuildCalendarService } from "../lib";
@@ -26,6 +26,11 @@ const formSchema = z
 export async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   const session = checkSession(req);
   const body = formSchema.parse(req.body);
+  const validation = await validatePublicUrlForSSRF(body.url);
+  if (!validation.isValid) {
+    return res.status(400).json({ message: `Exchange URL is not allowed: ${validation.error}` });
+  }
+
   const encrypted = symmetricEncrypt(JSON.stringify(body), process.env.CALENDSO_ENCRYPTION_KEY || "");
   const data = {
     type: "exchange_calendar",
@@ -38,7 +43,12 @@ export async function getHandler(req: NextApiRequest, res: NextApiResponse) {
   };
 
   try {
-    const service = BuildCalendarService({ id: 0, user: { email: session.user.email || "" }, ...data, encryptedKey: null });
+    const service = BuildCalendarService({
+      id: 0,
+      user: { email: session.user.email || "" },
+      ...data,
+      encryptedKey: null,
+    });
     await service?.listCalendars();
     await prisma.credential.create({ data });
   } catch (reason) {

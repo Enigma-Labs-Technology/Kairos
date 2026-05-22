@@ -1,7 +1,8 @@
 import dns from "node:dns/promises";
-import ipaddr from "ipaddr.js";
+import process from "node:process";
 import { IS_SELF_HOSTED } from "@calcom/lib/constants";
 import logger from "@calcom/lib/logger";
+import ipaddr from "ipaddr.js";
 
 const log: ReturnType<typeof logger.getSubLogger> = logger.getSubLogger({ prefix: ["ssrf-protection"] });
 
@@ -41,11 +42,15 @@ const CAL_AVATAR_PATH_REGEX = /^\/api\/avatar\/.+\.png$/;
 const ERRORS = {
   HTTPS_ONLY: "Only HTTPS URLs are allowed",
   INVALID_PROTOCOL: "Only HTTP and HTTPS protocols are allowed",
+  INVALID_STRICT_PROTOCOL: "Only HTTP and HTTPS protocols are allowed",
   PRIVATE_IP: "Private IP address",
   PRIVATE_IP_DNS: "Hostname resolves to private IP",
   BLOCKED_HOSTNAME: "Blocked hostname",
   INVALID_URL: "Invalid URL format",
   NON_IMAGE_DATA_URL: "Non-image data URL",
+  DNS_LOOKUP_FAILED: "DNS lookup failed",
+  URL_CREDENTIALS: "URL credentials are not allowed",
+  TOO_MANY_REDIRECTS: "Too many redirects",
 } as const;
 
 function normalizeHostname(hostname: string): string {
@@ -203,6 +208,147 @@ export function validateUrlForSSRFSync(urlString: string): SSRFValidationResult 
   }
 
   return { isValid: true };
+}
+
+type PublicSSRFValidationOptions = {
+  allowedProtocols?: readonly ("http:" | "https:")[];
+};
+
+type SSRFSafeFetchOptions = PublicSSRFValidationOptions & {
+  maxRedirects?: number;
+  timeoutMs?: number;
+  context?: Record<string, unknown>;
+};
+
+function validatePublicUrlCore(
+  urlString: string,
+  options: PublicSSRFValidationOptions = {}
+): SSRFValidationResult | { url: URL } {
+  const allowedProtocols = options.allowedProtocols ?? ["http:", "https:"];
+
+  let url: URL;
+  try {
+    url = new URL(urlString);
+  } catch {
+    return { isValid: false, error: ERRORS.INVALID_URL };
+  }
+
+  if (!allowedProtocols.includes(url.protocol as "http:" | "https:")) {
+    return { isValid: false, error: ERRORS.INVALID_STRICT_PROTOCOL };
+  }
+
+  if (url.username || url.password) {
+    return { isValid: false, error: ERRORS.URL_CREDENTIALS };
+  }
+
+  if (isBlockedHostname(url.hostname)) {
+    return { isValid: false, error: ERRORS.BLOCKED_HOSTNAME };
+  }
+
+  const hostnameForIPCheck = stripIPv6Brackets(url.hostname);
+  if (ipaddr.isValid(hostnameForIPCheck)) {
+    if (isPrivateIP(hostnameForIPCheck)) {
+      return { isValid: false, error: ERRORS.PRIVATE_IP };
+    }
+    return { isValid: true };
+  }
+
+  return { url };
+}
+
+/**
+ * Strict SSRF validation for attacker-controlled outbound server requests.
+ * Unlike validateUrlForSSRF(), this blocks private/internal destinations even
+ * on self-hosted deployments and fails closed when DNS cannot be checked.
+ */
+export async function validatePublicUrlForSSRF(
+  urlString: string,
+  options: PublicSSRFValidationOptions = {}
+): Promise<SSRFValidationResult> {
+  const result = validatePublicUrlCore(urlString, options);
+
+  if ("isValid" in result) {
+    return result;
+  }
+
+  try {
+    const addresses = await dns.lookup(result.url.hostname, { all: true });
+    for (const { address } of addresses) {
+      if (isPrivateIP(address)) {
+        return { isValid: false, error: ERRORS.PRIVATE_IP_DNS };
+      }
+    }
+  } catch {
+    return { isValid: false, error: ERRORS.DNS_LOOKUP_FAILED };
+  }
+
+  return { isValid: true };
+}
+
+function isRedirectResponse(response: Response): boolean {
+  return response.status >= 300 && response.status < 400;
+}
+
+function createTimeoutSignal(timeoutMs?: number): { signal?: AbortSignal; clear: () => void } {
+  if (!timeoutMs) {
+    return { clear: () => undefined };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timeout),
+  };
+}
+
+export async function fetchWithSSRFProtection(
+  urlString: string,
+  init: RequestInit = {},
+  options: SSRFSafeFetchOptions = {}
+): Promise<Response> {
+  const maxRedirects = options.maxRedirects ?? 0;
+  let currentUrl = new URL(urlString);
+
+  for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
+    const validation = await validatePublicUrlForSSRF(currentUrl.toString(), options);
+    if (!validation.isValid) {
+      logBlockedSSRFAttempt(currentUrl.toString(), validation.error ?? "Unknown SSRF validation error", {
+        redirectCount,
+        ...options.context,
+      });
+      throw new Error(`URL is not allowed: ${validation.error}`);
+    }
+
+    const timeout = createTimeoutSignal(options.timeoutMs);
+    let response: Response;
+    try {
+      response = await fetch(currentUrl.toString(), {
+        ...init,
+        redirect: "manual",
+        signal: timeout.signal ?? init.signal,
+      });
+    } finally {
+      timeout.clear();
+    }
+
+    if (!isRedirectResponse(response)) {
+      return response;
+    }
+
+    const location = response.headers.get("location");
+    if (!location) {
+      return response;
+    }
+
+    if (redirectCount === maxRedirects) {
+      throw new Error(`URL is not allowed: ${ERRORS.TOO_MANY_REDIRECTS}`);
+    }
+
+    currentUrl = new URL(location, currentUrl);
+  }
+
+  throw new Error(`URL is not allowed: ${ERRORS.TOO_MANY_REDIRECTS}`);
 }
 
 // Check if URL belongs to the same origin as the webapp (trusted internal URL)

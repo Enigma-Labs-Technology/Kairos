@@ -1,12 +1,12 @@
-import type { NextApiRequest, NextApiResponse } from "next";
-import { z } from "zod";
-
+import process from "node:process";
 import { symmetricEncrypt } from "@calcom/lib/crypto";
 import logger from "@calcom/lib/logger";
 import { defaultHandler } from "@calcom/lib/server/defaultHandler";
 import { defaultResponder } from "@calcom/lib/server/defaultResponder";
+import { validatePublicUrlForSSRF } from "@calcom/lib/ssrfProtection";
 import prisma from "@calcom/prisma";
-
+import type { NextApiRequest, NextApiResponse } from "next";
+import { z } from "zod";
 import getInstalledAppPath from "../../_utils/getInstalledAppPath";
 import { BuildCalendarService } from "../lib";
 
@@ -20,6 +20,11 @@ const bodySchema = z
 
 async function postHandler(req: NextApiRequest, res: NextApiResponse) {
   const body = bodySchema.parse(req.body);
+  const validation = await validatePublicUrlForSSRF(body.url);
+  if (!validation.isValid) {
+    return res.status(400).json({ message: `Exchange URL is not allowed: ${validation.error}` });
+  }
+
   // Get user
   const user = await prisma.user.findFirstOrThrow({
     where: {
