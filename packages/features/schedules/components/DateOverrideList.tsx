@@ -64,11 +64,12 @@ const DateOverrideList = ({
       return `${formatInTimeZone(start, "UTC", "h:mm a")} - ${formatInTimeZone(end, "UTC", "h:mm a")}`;
     }
 
-    return `${new Intl.DateTimeFormat(i18n.language, { hour: "numeric", minute: "numeric", hour12 }).format(
-      new Date(start.toISOString().slice(0, -1))
-    )} - ${new Intl.DateTimeFormat(i18n.language, { hour: "numeric", minute: "numeric", hour12 }).format(
-      new Date(end.toISOString().slice(0, -1))
-    )}`;
+    // ICU/CLDR data for English AM/PM markers changed between Node/V8 versions
+    // (e.g. "9:00 AM" → "9:00 a.m." in ICU 78). Use date-fns-tz format tokens,
+    // which are locale-stable, so the rendered string doesn't depend on the
+    // runtime's bundled ICU data.
+    const formatPattern = hour12 ? "h:mm a" : "HH:mm";
+    return `${formatInTimeZone(start, "UTC", formatPattern)} - ${formatInTimeZone(end, "UTC", formatPattern)}`;
   };
 
   return (
